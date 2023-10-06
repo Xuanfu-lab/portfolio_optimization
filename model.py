@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import LSTM, Flatten, Dense, Input, Conv1D, MaxPooling1D, BatchNormalization, Dropout, Bidirectional
+from tensorflow.keras.layers import LSTM, Flatten, Dense, Input, Conv1D, MaxPooling1D, BatchNormalization, Dropout, Bidirectional, RepeatVector
+from tensorflow.keras.models import Model
 from tensorflow.keras.models import Sequential, Model
 import tensorflow.keras.backend as K
 
@@ -31,7 +32,7 @@ class Model_LSTM:
             input_encoder = Input(shape=input_shape)
             # encoding_dim is the desired dimensionality of the encoded representation
             n_row, n_col = input_shape
-            encoding_dim = 0.5 * n_col
+            encoding_dim = int(0.5 * n_col)  # Adjust this as needed
             encoded = Dense(encoding_dim, activation='relu')(input_encoder)  
             encoder_model = Model(input_encoder, encoded)
             model = Sequential([
@@ -40,6 +41,35 @@ class Model_LSTM:
                 Flatten(),
                 Dense(outputs, activation='softmax', kernel_regularizer = kernel_regularizer)
             ])
+
+
+        elif self.structure_change == "CNN_SAE_LSTM":
+            outputs = 4  # Number of output units
+
+            # Define the CNN component
+            input_layer = Input(shape=input_shape)
+            n_row, n_col = input_shape
+            x = Conv1D(32, 3, activation='relu')(input_layer)
+            x = MaxPooling1D(2)(x)
+
+            # Flatten the output to pass it through the SAE
+            x = Flatten()(x)
+
+            # Define the Stacked Autoencoder (SAE)
+            encoding_dim_1 = int(0.75 * n_col)  # Adjust this as needed
+            encoding_dim_2 = 4  # Setting this to 4 to match your error description
+
+            # Encoding layers (2 layers as an example for "stacked")
+            encoded_1 = Dense(encoding_dim_1, activation='relu')(x)
+            encoded_2 = Dense(encoding_dim_2, activation='relu')(encoded_1)
+            x = RepeatVector(10)(encoded_2)
+
+            # LSTM and Dense layers
+            x = LSTM(64)(x)
+            output_layer = Dense(outputs, activation='softmax', kernel_regularizer = kernel_regularizer)(x)
+           
+            model = Model(input_layer, output_layer)
+
 
         elif self.structure_change == "SAE_CNN_LSTM":
             # Define the Stacked Autoencoder
@@ -70,6 +100,7 @@ class Model_LSTM:
             output_layer = Dense(outputs, activation='softmax', kernel_regularizer=kernel_regularizer)(x)
            
             model = Model(input_layer, output_layer)
+
 
         elif self.structure_change == "SAE_3CNN_LSTM":
             input_encoder = Input(shape=input_shape)
@@ -106,6 +137,7 @@ class Model_LSTM:
            
             model = Model(input_layer, output_layer)
 
+
         elif self.structure_change == "Double_LSTM":
             model = Sequential([
                 # First LSTM Layer with Dropout and Recurrent Dropout
@@ -120,12 +152,14 @@ class Model_LSTM:
                 Dense(outputs, activation='softmax', kernel_regularizer=kernel_regularizer)
             ])
 
+
         elif self.structure_change == "BiLSTM":
             model = Sequential([
                 Bidirectional(LSTM(64, return_sequences=True,dropout=0.2, input_shape=input_shape)),
                 Flatten(),
                 Dense(outputs, activation='softmax', kernel_regularizer=kernel_regularizer)
             ])
+
 
         else:
             model = Sequential([
@@ -136,41 +170,34 @@ class Model_LSTM:
 
             
         @tf.autograph.experimental.do_not_convert   
-        def sharpe_loss(_, y_pred):
+        def loss(_, y_pred):
             # make all time-series start at 1
             data = tf.divide(self.data, self.data[0])  
             
             # value of the portfolio after allocations applied
             portfolio_values = tf.reduce_sum(tf.multiply(data, y_pred), axis=1) 
-            
             portfolio_returns = (portfolio_values[1:] - portfolio_values[:-1]) / portfolio_values[:-1]  # % change formula
-            
-            # mean = tf.reduce_mean(portfolio_returns, axis=0)
-            # stddev = tf.math.reduce_std(portfolio_returns, axis=0)
-            # portfolio_returns = (portfolio_returns - mean) / stddev
             
             if self.loss == "paper":
                 loss = K.mean(portfolio_returns) / K.std(portfolio_returns)
             elif self.loss == "return":
                 loss = K.mean(portfolio_returns)
             elif self.loss == "convex":
-                loss = K.mean(portfolio_returns) - K.std(portfolio_returns)
+                loss = K.mean(portfolio_returns) - 1.5 * K.std(portfolio_returns)
             elif self.loss == "sortino":
                 loss = K.mean(portfolio_returns) / K.std(portfolio_returns[portfolio_returns<0])
             elif self.loss == "sortino_convex":
                 loss = K.mean(portfolio_returns) - K.std(portfolio_returns[portfolio_returns<0])
             return -loss
         
-        model.compile(loss=sharpe_loss, optimizer='adam')
+        model.compile(loss=loss, optimizer='adam')
         return model
     
     
     def get_allocations(self, data: pd.DataFrame):
         '''
         Computes and returns the allocation ratios that optimize the Sharpe over the given data
-        
         input: data - DataFrame of historical closing prices of various assets
-        
         return: the allocations ratios for each of the given assets
         '''
         
@@ -188,5 +215,3 @@ class Model_LSTM:
                        verbose=0
                       )
         return self.model.predict(fit_predict_data)[0]
-    
-    

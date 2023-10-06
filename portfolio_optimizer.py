@@ -143,6 +143,7 @@ class portfolio_optimizer:
                 na_threshold = 5
                 returns = chunk.dropna(thresh = period-na_threshold, axis=1)
                 returns = returns.fillna(0)
+                returns = returns.iloc[-50:, :] # paper says only use that last 50 days info, make sure period > 50
                 chunk_weights = self.__optimize_1_run_non_ML(returns, period, method, cov_estimation)
                 weights = pd.concat([weights, chunk_weights], axis=0, ignore_index=True)
 
