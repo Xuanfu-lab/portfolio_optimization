@@ -12,7 +12,7 @@ class portfolio_optimizer:
         self.weight_long = None
     
 
-    def __optimize_1_run_non_ML(self, returns:pd.DataFrame, period:int, loss_func:str, cov_estimation:str):
+    def __optimize_1_run_non_ML(self, returns:pd.DataFrame, loss_func:str, cov_estimation:str):
         # basic feature
         tickers = returns.columns
         date = returns.index[-1]
@@ -101,7 +101,7 @@ class portfolio_optimizer:
                             })
 
 
-    def __optimize_1_run_LSTM(self, price_wide:pd.DataFrame, period:int, loss:str, reg:bool, structure_change):
+    def __optimize_1_run_LSTM(self, price_wide:pd.DataFrame, loss:str, reg:bool, structure_change):
         tickers = price_wide.columns
         date = price_wide.index[-1]
         return_wide = price_wide.pct_change().dropna()
@@ -121,30 +121,32 @@ class portfolio_optimizer:
     def optimize(self, 
                  method:str, 
                  cov_estimation:str='historical', 
-                 period:int=252, 
+                 rebalance_frequency:int=252, 
+                 look_back:int=50,   # paper says only use that last 50 days info
                  loss = "paper", 
                  reg = False,
                  structure_change = False,
                 ):
-        n_rebalance = self.price_wide.shape[0] // period
+        n_rebalance = self.price_wide.shape[0] // rebalance_frequency
         weights = pd.DataFrame(columns=['Date', 'Ticker', 'Weight', 'Annualized_vol'])
+        na_threshold = 5
         if method == "LSTM":
-            chunks = [self.price_wide.iloc[i:i+period, :] for i in range(0, period * n_rebalance, period)]
+            chunks = [self.price_wide.iloc[(i+1)*rebalance_frequency-look_back:(i+1)*rebalance_frequency, :] for i in range(n_rebalance)]
             for chunk in chunks:
-                na_threshold = 5
-                prices = chunk.dropna(thresh = period - na_threshold, axis=1)
+                if chunk.shape[0] < look_back:
+                    continue
+                prices = chunk.dropna(thresh = look_back - na_threshold, axis=1)
                 prices = prices.fillna(method = 'ffill')
-                prices = prices.iloc[-50:, :] # paper says only use that last 50 days info, make sure period > 50
-                chunk_weights = self.__optimize_1_run_LSTM(prices, period, loss, reg, structure_change)
+                chunk_weights = self.__optimize_1_run_LSTM(prices, loss, reg, structure_change)
                 weights = pd.concat([weights, chunk_weights], axis=0, ignore_index=True)
         else:
-            chunks = [self.return_wide.iloc[i:i+period, :] for i in range(0, period * n_rebalance, period)]
+            chunks = [self.return_wide.iloc[(i+1)*rebalance_frequency-look_back:(i+1)*rebalance_frequency, :] for i in range(n_rebalance)]
             for chunk in chunks:
-                na_threshold = 5
-                returns = chunk.dropna(thresh = period-na_threshold, axis=1)
+                if chunk.shape[0] < look_back:
+                    continue
+                returns = chunk.dropna(thresh = look_back-na_threshold, axis=1)
                 returns = returns.fillna(0)
-                returns = returns.iloc[-50:, :] # paper says only use that last 50 days info, make sure period > 50
-                chunk_weights = self.__optimize_1_run_non_ML(returns, period, method, cov_estimation)
+                chunk_weights = self.__optimize_1_run_non_ML(returns, method, cov_estimation)
                 weights = pd.concat([weights, chunk_weights], axis=0, ignore_index=True)
 
         weights = pd.merge(weights, self.price_long[['Date', 'Ticker', 'Price']], on=['Date', 'Ticker'], how='right')
