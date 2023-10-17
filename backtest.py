@@ -29,12 +29,18 @@ def maximum_drawdown(pnl: pd.Series):
 
 
 
-def backtest(weight_long):
+def backtest(weight_long, C = 0.0001):
     data = weight_long.copy()
     data["ret"] = data.groupby("Ticker")["Price"].transform(lambda x: x.shift(-1)/x -1)
     data["pnl"] = data["ret"] * data["Weight"]
     port_pnl = data.groupby("Date").apply(lambda x: np.sum(x["pnl"]))
     port_pnl.index = pd.to_datetime(port_pnl.index)
+
+    # t-cost modeling
+    weight_wide = weight_long.pivot(index = "Date", columns = "Ticker", values = "Weight")
+    t_cost =  C * (weight_wide.shift(1) - weight_wide.shift(2)).sum(axis=1)
+    port_pnl -= t_cost
+
     port_nav = port_pnl.cumsum() + 1
     port_vol = weight_long.groupby('Date').apply(lambda x: np.sqrt(np.sum((x['Weight'] * x['Annualized_vol'])**2)))
     
